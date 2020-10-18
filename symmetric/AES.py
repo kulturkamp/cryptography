@@ -151,7 +151,6 @@ class AES:
     def expand_key(self, master_key):
         key_columns = bytes_to_state(master_key)
         nk = len(master_key) // 4
-
         i = 1
         while len(key_columns) < (self.rounds + 1) * 4:
             word = list(key_columns[-1])
@@ -171,6 +170,7 @@ class AES:
         return [key_columns[4 * i: 4 * (i + 1)] for i in range(len(key_columns) // 4)]
 
     def encrypt_block(self, plaintext):
+        # ecb mode encrypt
         plain_state = bytes_to_state(plaintext)
 
         add_round_key(plain_state, self.key_schedule[0])
@@ -188,6 +188,7 @@ class AES:
         return state_to_bytes(plain_state)
 
     def decrypt_block(self, ciphertext):
+        # ecb mode decrypt
         cipher_state = bytes_to_state(ciphertext)
 
         add_round_key(cipher_state, self.key_schedule[-1])
@@ -205,18 +206,18 @@ class AES:
         return state_to_bytes(cipher_state)
 
     def encrypt(self, plaintext, iv):
+        # cbc mode
         plaintext = pad(plaintext)
-        assert(len(iv) == 16)
         blocks = []
         previous = iv
         for plaintext_block in split_blocks(plaintext):
             block = self.encrypt_block(xor_bytes(plaintext_block, previous))
             blocks.append(block)
             previous = block
-
         return b''.join(blocks)
 
     def decrypt(self, ciphertext, iv):
+        # cbc mode
         blocks = []
         previous = iv
         for ciphertext_block in split_blocks(ciphertext):
@@ -254,25 +255,156 @@ class AES:
                 print("chunk {} decrypted".format(j))
                 j += 1
 
+    def encrypt_cbc(self, plaintext, iv):
+        plaintext = pad(plaintext)
+        blocks = []
+        previous = iv
+        for plaintext_block in split_blocks(plaintext):
+            # encrypt(plaintext_block XOR previous)
+            block = self.encrypt_block(xor_bytes(plaintext_block, previous))
+            blocks.append(block)
+            previous = block
+        return b''.join(blocks)
+
+    def decrypt_cbc(self, ciphertext, iv):
+        blocks = []
+        previous = iv
+        for ciphertext_block in split_blocks(ciphertext):
+            # previous XOR decrypt(ciphertext)
+            blocks.append(xor_bytes(previous, self.decrypt_block(ciphertext_block)))
+            previous = ciphertext_block
+        return unpad(b''.join(blocks))
+
+    def encrypt_cfb(self, plaintext, iv):
+        blocks = []
+        prev_ciphertext = iv
+        for plaintext_block in split_blocks(plaintext):
+            # plaintext_block XOR encrypt(prev_ciphertext)
+            ciphertext_block = xor_bytes(plaintext_block, self.encrypt_block(prev_ciphertext))
+            blocks.append(ciphertext_block)
+            prev_ciphertext = ciphertext_block
+        return b''.join(blocks)
+
+    def decrypt_cfb(self, ciphertext, iv):
+        blocks = []
+        prev_ciphertext = iv
+        for ciphertext_block in split_blocks(ciphertext):
+            # ciphertext XOR decrypt(prev_ciphertext)
+            plaintext_block = xor_bytes(ciphertext_block, self.encrypt_block(prev_ciphertext))
+            blocks.append(plaintext_block)
+            prev_ciphertext = ciphertext_block
+        return b''.join(blocks)
+
+    def encrypt_ofb(self, plaintext, iv):
+        blocks = []
+        previous = iv
+        for plaintext_block in split_blocks(plaintext):
+            # plaintext_block XOR encrypt(previous)
+            block = self.encrypt_block(previous)
+            ciphertext_block = xor_bytes(plaintext_block, block)
+            blocks.append(ciphertext_block)
+            previous = block
+        return b''.join(blocks)
+
+    def decrypt_ofb(self, ciphertext, iv):
+        blocks = []
+        previous = iv
+        for ciphertext_block in split_blocks(ciphertext):
+            # ciphertext XOR encrypt(previous)
+            block = self.encrypt_block(previous)
+            plaintext_block = xor_bytes(ciphertext_block, block)
+            blocks.append(plaintext_block)
+            previous = block
+        return b''.join(blocks)
+
+    @staticmethod
+    def inc_bytes(a):
+        out = list(a)
+        for i in reversed(range(len(out))):
+            if out[i] == 0xFF:
+                out[i] = 0
+            else:
+                out[i] += 1
+                break
+        return bytes(out)
+
+    def encrypt_ctr(self, plaintext, iv):
+        blocks = []
+        nonce = iv
+        for plaintext_block in split_blocks(plaintext):
+            # CTR mode encrypt: plaintext_block XOR encrypt(nonce)
+            block = xor_bytes(plaintext_block, self.encrypt_block(nonce))
+            blocks.append(block)
+            nonce = self.inc_bytes(nonce)
+        return b''.join(blocks)
+
+    def decrypt_ctr(self, ciphertext, iv):
+        blocks = []
+        nonce = iv
+        for ciphertext_block in split_blocks(ciphertext):
+            # CTR mode decrypt: ciphertext XOR encrypt(nonce)
+            block = xor_bytes(ciphertext_block, self.encrypt_block(nonce))
+            blocks.append(block)
+            nonce = self.inc_bytes(nonce)
+        return b''.join(blocks)
+
 
 import time
+def benchmark():
+    IV = get_iv()
+    master_k = b'k' * 32
+    aes_obj = AES(master_k)
+    message = b'M'*64*1024
+
+    # ECB
+    start = time.time()
+    enc = []
+    for block in split_blocks(message):
+        enc.append(aes_obj.encrypt_block(block))
+    stop1 = time.time()
+    dec = []
+    for cip in split_blocks(b''.join(enc)):
+        dec.append(aes_obj.decrypt_block(cip))
+    stop2 = time.time()
+    if message == b''.join(dec):
+        print('***ECB*** 64*1024 bytes encrypted in {}; decrypted in {}'.format(stop1-start, stop2-stop1))
+
+    # CBC
+    start = time.time()
+    enc = aes_obj.encrypt_cbc(message, IV)
+    stop1 = time.time()
+    dec = aes_obj.decrypt_cbc(enc, IV)
+    stop2 = time.time()
+    if message == dec:
+        print('***CBC*** 64*1024 bytes encrypted in {}; decrypted in {}'.format(stop1-start, stop2-stop1))
+
+    # CFB
+    start = time.time()
+    enc = aes_obj.encrypt_cfb(message, IV)
+    stop1 = time.time()
+    dec = aes_obj.decrypt_cfb(enc, IV)
+    stop2 = time.time()
+    if message == dec:
+        print('***CFB*** 64*1024 bytes encrypted in {}; decrypted in {}'.format(stop1-start, stop2-stop1))
+
+    # OFB
+    start = time.time()
+    enc = aes_obj.encrypt_ofb(message, IV)
+    stop1 = time.time()
+    dec = aes_obj.decrypt_ofb(enc, IV)
+    stop2 = time.time()
+    if message == dec:
+        print('***OFB*** 64*1024 bytes encrypted in {}; decrypted in {}'.format(stop1 - start, stop2 - stop1))
+
+    # CTR
+    start = time.time()
+    enc = aes_obj.encrypt_ctr(message, IV)
+    stop1 = time.time()
+    dec = aes_obj.decrypt_ctr(enc, IV)
+    stop2 = time.time()
+    if message == dec:
+        print('***CTR*** 64*1024 bytes encrypted in {}; decrypted in {}'.format(stop1 - start, stop2 - stop1))
+
 
 if __name__ == '__main__':
-    IV = get_iv()
-    master_k = b'k' * 16
-    aes_obj = AES(master_k)
-
-    # estart = time.time()
-    # aes_obj.encrypt_file("1gbtest1.bin", iv=IV)
-    # print("encrypted within %s seconds" % (time.time() - estart))
-    # dstart = time.time()
-    # aes_obj.decrypt_file("1gbtest1.bin.enc")
-    # print("decrypted within %s seconds" % (time.time() - dstart))
-
-    message = b'M' * 16
-    cip = aes_obj.encrypt_block(message)
-    print(cip)
-
-    dec = aes_obj.decrypt_block(cip)
-    print(dec)
-    print(dec == message)
+    benchmark()

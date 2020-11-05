@@ -1,4 +1,7 @@
 from secrets import token_bytes
+import struct
+
+
 K = (0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
@@ -16,19 +19,26 @@ def rotate_right(x, b):
     return ((x >> b) | (x << (32 - b))) & 0xFFFFFFFF
 
 
-
-
-
 def pad(message):
-    if len(message) % 64 == 0:
-        return message
-    padding_len = 64 - (len(message) % 64)
-    padding = bytes([padding_len] * padding_len)
-    return message + padding
+    if len(message) <= 55:
+        return b''.join((
+            message,
+            b'\x80',
+            b'\x00' * (55 - len(message)),
+            struct.pack('>LL', len(message) >> 32, len(message) & 0xFFFFFFFF),
+        ))
+    else:
+        return b''.join((
+            message,
+            b'\x80',
+            b'\x00' * (63 - len(message)),
+            b'\x00' * 56,
+            struct.pack('>LL', len(message) >> 32, len(message) & 0xFFFFFFFF),
+        ))
 
 
 def split_blocks(message, block_size=64):
-    return [message[i:i + 64] for i in range(0, len(message), block_size)]
+    return [message[i:i + block_size] for i in range(0, len(message), block_size)]
 
 
 def sha_compress(xt, kt, a, b, c, d, e, f, g, h):
@@ -71,13 +81,13 @@ def proof_of_work():
 
 
 if __name__ == '__main__':
-    import time
-    sha_obj = sha256(b'a'*64*1024)
+    sha_obj = sha256(b'a'*64)
     hash = sha_obj.hash()
     print(hash)
     print(''.join('{:02x}'.format(i) for i in hash))
 
-    start = time.time()
-    proof_of_work()
-    stop = time.time()
-    print(stop-start)
+    # import time
+    # start = time.time()
+    # proof_of_work()
+    # stop = time.time()
+    # print(stop-start)

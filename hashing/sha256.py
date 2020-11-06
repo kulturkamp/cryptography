@@ -1,6 +1,4 @@
 from secrets import token_bytes
-import struct
-
 
 K = (0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -20,21 +18,12 @@ def rotate_right(x, b):
 
 
 def pad(message):
-    if len(message) <= 55:
-        return b''.join((
-            message,
-            b'\x80',
-            b'\x00' * (55 - len(message)),
-            struct.pack('>LL', len(message) >> 32, len(message) & 0xFFFFFFFF),
-        ))
-    else:
-        return b''.join((
-            message,
-            b'\x80',
-            b'\x00' * (63 - len(message)),
-            b'\x00' * 56,
-            struct.pack('>LL', len(message) >> 32, len(message) & 0xFFFFFFFF),
-        ))
+    length = len(message)*8
+    message += b'\x80'
+    while (len(message)*8 + 64) % 512 != 0:
+        message += b'\x00'
+    message += length.to_bytes(8, 'big')
+    return message
 
 
 def split_blocks(message, block_size=64):
@@ -66,7 +55,7 @@ class sha256():
             a, b, c, d, e, f, g, h = digest
             for i in range(64):
                 a, b, c, d, e, f, g, h = sha_compress(X[i], K[i], a, b, c, d, e, f, g, h)
-            digest = [(x + y) & 0xFFFFFFF for x, y in zip(digest,  (a, b, c, d, e, f, g, h))]
+            digest = [(x + y) & 0xFFFFFFFF for x, y in zip(digest,  (a, b, c, d, e, f, g, h))]
         return b''.join(d.to_bytes(4, 'big') for d in digest)
 
 
@@ -81,10 +70,13 @@ def proof_of_work():
 
 
 if __name__ == '__main__':
-    sha_obj = sha256(b'a'*64)
+    sha_obj = sha256(b'text')
     hash = sha_obj.hash()
-    print(hash)
-    print(''.join('{:02x}'.format(i) for i in hash))
+    assert '982d9e3eb996f559e633f4d194def3761d909f5a3b647d1a851fead67c32c9d1' == ''.join('{:02x}'.format(i) for i in hash)
+
+    sha_obj = sha256(b'test123123')
+    hash = sha_obj.hash()
+    assert 'f4c2178860817a2c25d2cb3185aa25779b0ecaf17c30845926218e17a18a9f89' == ''.join('{:02x}'.format(i) for i in hash)
 
     # import time
     # start = time.time()
